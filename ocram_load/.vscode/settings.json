@@ -1,0 +1,8 @@
+{
+    "files.associations": {
+        "ocram_load_ta.h": "c",
+        "stdio.h": "c",
+        "type_traits": "c",
+        "ocram_load_ta.h": "c"
+    }
+}
