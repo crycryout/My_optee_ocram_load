@@ -32,6 +32,7 @@
                                     &key);
      if (res == TEE_SUCCESS) {
          state->key = key;
+         DMSG("Persistent key loaded successfully");
      } else {
          DMSG("No persistent key found (res=%#" PRIx32 "), will generate one", res);
      }
@@ -45,36 +46,38 @@
  {
      TEE_Result res;
      TEE_ObjectHandle persistent_key = TEE_HANDLE_NULL;
+     uint32_t obj_flags = TEE_DATA_FLAG_ACCESS_READ | TEE_DATA_FLAG_ACCESS_WRITE_META |
+                            TEE_DATA_FLAG_OVERWRITE;
  
      res = TEE_CreatePersistentObject(TEE_STORAGE_PRIVATE,
                                       ACIPHER_KEY_ID,
                                       ACIPHER_KEY_ID_LEN,
-                                      TEE_DATA_FLAG_ACCESS_WRITE | TEE_DATA_FLAG_ACCESS_READ,
+                                      obj_flags,
                                       key,
-                                      NULL,
-                                      0,
+                                      NULL, 0,
                                       &persistent_key);
      if (res != TEE_SUCCESS) {
          EMSG("TEE_CreatePersistentObject failed: %#" PRIx32, res);
      } else {
-         /* 关闭persistent_key句柄，释放资源 */
          TEE_CloseObject(persistent_key);
      }
      return res;
  }
  
- /* 生成 RSA 密钥对，如果已有持久化密钥则直接加载 */
+ /*
+  * 生成 RSA 密钥对，如果已有持久化密钥则直接加载
+  */
  static TEE_Result cmd_gen_key(struct acipher *state, uint32_t pt,
-                               TEE_Param params[TEE_NUM_PARAMS])
+                                TEE_Param params[TEE_NUM_PARAMS])
  {
      TEE_Result res;
      uint32_t key_size;
      TEE_ObjectHandle key;
      const uint32_t key_type = TEE_TYPE_RSA_KEYPAIR;
      const uint32_t exp_pt = TEE_PARAM_TYPES(TEE_PARAM_TYPE_VALUE_INPUT,
-                                             TEE_PARAM_TYPE_NONE,
-                                             TEE_PARAM_TYPE_NONE,
-                                             TEE_PARAM_TYPE_NONE);
+                                              TEE_PARAM_TYPE_NONE,
+                                              TEE_PARAM_TYPE_NONE,
+                                              TEE_PARAM_TYPE_NONE);
  
      if (pt != exp_pt)
          return TEE_ERROR_BAD_PARAMETERS;
@@ -83,7 +86,7 @@
  
      /* 如果已经有持久化密钥，则直接加载 */
      res = load_persistent_key(state);
-     if (res == TEE_SUCCESS) {
+     if (res == TEE_SUCCESS && state->key != TEE_HANDLE_NULL) {
          DMSG("Persistent key loaded successfully");
          return TEE_SUCCESS;
      }
@@ -111,7 +114,6 @@
          return res;
      }
  
-     /* 更新会话中的密钥 */
      TEE_FreeTransientObject(state->key);
      state->key = key;
      return TEE_SUCCESS;
@@ -119,7 +121,7 @@
  
  /* 使用 RSAES_PKCS1_V1_5 算法加密数据 */
  static TEE_Result cmd_enc(struct acipher *state, uint32_t pt,
-                           TEE_Param params[TEE_NUM_PARAMS])
+                            TEE_Param params[TEE_NUM_PARAMS])
  {
      TEE_Result res;
      const void *inbuf;
@@ -169,7 +171,6 @@
               inbuf_len, params[1].memref.size, res);
      }
      params[1].memref.size = outbuf_len;
- 
  out:
      TEE_FreeOperation(op);
      return res;
@@ -177,7 +178,7 @@
  
  /* 使用 RSASSA_PKCS1_V1_5_SHA256 对摘要进行签名 */
  static TEE_Result cmd_sign(struct acipher *state, uint32_t pt,
-                            TEE_Param params[TEE_NUM_PARAMS])
+                             TEE_Param params[TEE_NUM_PARAMS])
  {
      TEE_Result res;
      const void *inbuf;
@@ -191,64 +192,61 @@
                                                TEE_PARAM_TYPE_MEMREF_OUTPUT,
                                                TEE_PARAM_TYPE_NONE,
                                                TEE_PARAM_TYPE_NONE);
- 
      if (pt != exp_pt)
          return TEE_ERROR_BAD_PARAMETERS;
      if (!state->key)
          return TEE_ERROR_BAD_STATE;
- 
      res = TEE_GetObjectInfo1(state->key, &key_info);
      if (res) {
          EMSG("TEE_GetObjectInfo1 failed: %#" PRIx32, res);
          return res;
      }
- 
      inbuf = params[0].memref.buffer;
      inbuf_len = params[0].memref.size;
      signature = params[1].memref.buffer;
      signature_len = params[1].memref.size;
- 
      res = TEE_AllocateOperation(&op, alg, TEE_MODE_SIGN, key_info.keySize);
      if (res) {
          EMSG("TEE_AllocateOperation for sign failed: %#" PRIx32, res);
          return res;
      }
- 
      res = TEE_SetOperationKey(op, state->key);
      if (res) {
          EMSG("TEE_SetOperationKey for sign failed: %#" PRIx32, res);
          TEE_FreeOperation(op);
          return res;
      }
- 
      res = TEE_AsymmetricSignDigest(op, NULL, 0, inbuf, inbuf_len, signature, &signature_len);
      if (res) {
          EMSG("TEE_AsymmetricSignDigest failed: %#" PRIx32, res);
      }
      params[1].memref.size = signature_len;
- 
      TEE_FreeOperation(op);
      return res;
  }
  
- /* 使用 RSASSA_PKCS1_V1_5_SHA256 验证签名，
-  * 输出：params[2].value.a 为 1 表示签名有效，0 表示签名无效
+ /* 使用 RSASSA_PKCS1_V1_5_SHA256 验证签名
+  * 修改后：首先计算输入数据的SHA-256摘要，
+  * 然后使用该摘要进行签名验证，输出：params[2].value.a 为1表示签名有效，0表示签名无效
   */
  static TEE_Result cmd_verify(struct acipher *state, uint32_t pt,
                                 TEE_Param params[TEE_NUM_PARAMS])
  {
      TEE_Result res;
-     const void *inbuf;
-     uint32_t inbuf_len;
+     const void *raw_input;
+     uint32_t raw_input_len;
      const void *signature;
      uint32_t signature_len;
-     TEE_OperationHandle op;
+     TEE_OperationHandle op = TEE_HANDLE_NULL;
      TEE_ObjectInfo key_info;
      const uint32_t alg = TEE_ALG_RSASSA_PKCS1_V1_5_SHA256;
-     const uint32_t exp_pt = TEE_PARAM_TYPES(TEE_PARAM_TYPE_MEMREF_INPUT,
-                                               TEE_PARAM_TYPE_MEMREF_INPUT,
+     const uint32_t exp_pt = TEE_PARAM_TYPES(TEE_PARAM_TYPE_MEMREF_INPUT,  // 原始输入数据
+                                               TEE_PARAM_TYPE_MEMREF_INPUT,  // 签名
                                                TEE_PARAM_TYPE_VALUE_OUTPUT,
                                                TEE_PARAM_TYPE_NONE);
+     uint8_t digest[32];
+     uint32_t digest_len = sizeof(digest);
+     TEE_OperationHandle digest_op = TEE_HANDLE_NULL;
  
      if (pt != exp_pt)
          return TEE_ERROR_BAD_PARAMETERS;
@@ -261,39 +259,51 @@
          return res;
      }
  
-     inbuf = params[0].memref.buffer;
-     inbuf_len = params[0].memref.size;
+     /* 获取原始输入数据 */
+     raw_input = params[0].memref.buffer;
+     raw_input_len = params[0].memref.size;
      signature = params[1].memref.buffer;
      signature_len = params[1].memref.size;
  
+     /* 先计算输入数据的SHA-256摘要 */
+     res = TEE_AllocateOperation(&digest_op, TEE_ALG_SHA256, TEE_MODE_DIGEST, 0);
+     if (res) {
+         EMSG("TEE_AllocateOperation for digest failed: %#" PRIx32, res);
+         return res;
+     }
+     res = TEE_DigestDoFinal(digest_op, raw_input, raw_input_len, digest, &digest_len);
+     TEE_FreeOperation(digest_op);
+     if (res) {
+         EMSG("TEE_DigestDoFinal failed: %#" PRIx32, res);
+         return res;
+     }
+ 
+     /* 使用计算出的摘要进行签名验证 */
      res = TEE_AllocateOperation(&op, alg, TEE_MODE_VERIFY, key_info.keySize);
      if (res) {
          EMSG("TEE_AllocateOperation for verify failed: %#" PRIx32, res);
          return res;
      }
- 
      res = TEE_SetOperationKey(op, state->key);
      if (res) {
          EMSG("TEE_SetOperationKey for verify failed: %#" PRIx32, res);
          TEE_FreeOperation(op);
          return res;
      }
- 
-     res = TEE_AsymmetricVerifyDigest(op, NULL, 0, inbuf, inbuf_len, signature, signature_len);
+     res = TEE_AsymmetricVerifyDigest(op, NULL, 0, digest, digest_len, signature, signature_len);
      if (res == TEE_SUCCESS) {
          params[2].value.a = 1;
      } else {
          params[2].value.a = 0;
          EMSG("TEE_AsymmetricVerifyDigest failed: %#" PRIx32, res);
      }
- 
      TEE_FreeOperation(op);
      return res;
  }
  
  /* 生成摘要功能：使用 SHA-256 算法
-  * 输入：params[0].memref  待计算摘要的数据
-  * 输出：params[1].memref  摘要输出（SHA-256 固定32字节）
+  * 输入：params[0].memref 待计算摘要的数据
+  * 输出：params[1].memref 摘要输出（SHA-256 固定32字节）
   */
  static TEE_Result cmd_digest(struct acipher *state, uint32_t pt,
                                 TEE_Param params[TEE_NUM_PARAMS])
@@ -310,56 +320,52 @@
                                                TEE_PARAM_TYPE_MEMREF_OUTPUT,
                                                TEE_PARAM_TYPE_NONE,
                                                TEE_PARAM_TYPE_NONE);
- 
+     
      if (pt != exp_pt)
          return TEE_ERROR_BAD_PARAMETERS;
- 
+     
      inbuf = params[0].memref.buffer;
      inbuf_len = params[0].memref.size;
      digest = params[1].memref.buffer;
      digest_len = params[1].memref.size;
- 
+     
      res = TEE_AllocateOperation(&op, alg, TEE_MODE_DIGEST, 0);
      if (res) {
          EMSG("TEE_AllocateOperation for digest failed: %#" PRIx32, res);
          return res;
      }
- 
+     
      res = TEE_DigestDoFinal(op, inbuf, inbuf_len, digest, &digest_len);
      if (res) {
          EMSG("TEE_DigestDoFinal failed: %#" PRIx32, res);
      }
      params[1].memref.size = digest_len;
- 
+     
      TEE_FreeOperation(op);
      return res;
  }
  
  TEE_Result TA_CreateEntryPoint(void)
  {
-     /* Nothing to do */
      return TEE_SUCCESS;
  }
  
  void TA_DestroyEntryPoint(void)
  {
-     /* Nothing to do */
  }
  
  TEE_Result TA_OpenSessionEntryPoint(uint32_t __unused param_types,
                                      TEE_Param __unused params[4],
                                      void **session)
  {
-     struct acipher *state;
- 
-     state = TEE_Malloc(sizeof(*state), 0);
+     struct acipher *state = TEE_Malloc(sizeof(*state), 0);
      if (!state)
          return TEE_ERROR_OUT_OF_MEMORY;
- 
-     /* 尝试加载已有持久化密钥 */
+     
      state->key = TEE_HANDLE_NULL;
-     load_persistent_key(state);  /* 若加载失败，不算致命错误，后续可调用生成命令 */
- 
+     /* 尝试加载已有持久化密钥，如果加载失败，可在后续调用生成命令 */
+     load_persistent_key(state);
+     
      *session = state;
      return TEE_SUCCESS;
  }
@@ -367,7 +373,6 @@
  void TA_CloseSessionEntryPoint(void *session)
  {
      struct acipher *state = session;
- 
      if (state->key != TEE_HANDLE_NULL)
          TEE_FreeTransientObject(state->key);
      TEE_Free(state);
@@ -378,7 +383,6 @@
                                        TEE_Param params[TEE_NUM_PARAMS])
  {
      struct acipher *state = session;
- 
      switch (cmd) {
      case TA_ACIPHER_CMD_GEN_KEY:
          return cmd_gen_key(state, param_types, params);
