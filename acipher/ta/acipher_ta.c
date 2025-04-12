@@ -75,16 +75,22 @@
      TEE_ObjectHandle key;
      const uint32_t key_type = TEE_TYPE_RSA_KEYPAIR;
      const uint32_t exp_pt = TEE_PARAM_TYPES(TEE_PARAM_TYPE_VALUE_INPUT,
-                                              TEE_PARAM_TYPE_NONE,
-                                              TEE_PARAM_TYPE_NONE,
-                                              TEE_PARAM_TYPE_NONE);
+                                               TEE_PARAM_TYPE_NONE,
+                                               TEE_PARAM_TYPE_NONE,
+                                               TEE_PARAM_TYPE_NONE);
  
      if (pt != exp_pt)
          return TEE_ERROR_BAD_PARAMETERS;
  
      key_size = params[0].value.a;
  
-     /* 如果已经有持久化密钥，则直接加载 */
+     /* 如果已有密钥，则直接返回 */
+     if (state->key != TEE_HANDLE_NULL) {
+         DMSG("Persistent key already loaded");
+         return TEE_SUCCESS;
+     }
+ 
+     /* 尝试加载持久化密钥 */
      res = load_persistent_key(state);
      if (res == TEE_SUCCESS && state->key != TEE_HANDLE_NULL) {
          DMSG("Persistent key loaded successfully");
@@ -121,7 +127,7 @@
  
  /* 使用 RSAES_PKCS1_V1_5 算法加密数据 */
  static TEE_Result cmd_enc(struct acipher *state, uint32_t pt,
-                            TEE_Param params[TEE_NUM_PARAMS])
+                           TEE_Param params[TEE_NUM_PARAMS])
  {
      TEE_Result res;
      const void *inbuf;
@@ -176,36 +182,59 @@
      return res;
  }
  
- /* 使用 RSASSA_PKCS1_V1_5_SHA256 对摘要进行签名 */
+ /* 使用 RSASSA_PKCS1_V1_5_SHA256 对摘要进行签名
+  * 修改后：先对输入数据计算 SHA-256 摘要，再签名该摘要
+  */
  static TEE_Result cmd_sign(struct acipher *state, uint32_t pt,
-                             TEE_Param params[TEE_NUM_PARAMS])
+                            TEE_Param params[TEE_NUM_PARAMS])
  {
      TEE_Result res;
      const void *inbuf;
      uint32_t inbuf_len;
+     uint8_t digest[32];
+     uint32_t digest_len = sizeof(digest);
+     TEE_OperationHandle digest_op = TEE_HANDLE_NULL;
+     TEE_OperationHandle op = TEE_HANDLE_NULL;
+     TEE_ObjectInfo key_info;
      void *signature;
      uint32_t signature_len;
-     TEE_OperationHandle op;
-     TEE_ObjectInfo key_info;
-     const uint32_t alg = TEE_ALG_RSASSA_PKCS1_V1_5_SHA256;
+     const uint32_t sign_alg = TEE_ALG_RSASSA_PKCS1_V1_5_SHA256;
      const uint32_t exp_pt = TEE_PARAM_TYPES(TEE_PARAM_TYPE_MEMREF_INPUT,
                                                TEE_PARAM_TYPE_MEMREF_OUTPUT,
                                                TEE_PARAM_TYPE_NONE,
                                                TEE_PARAM_TYPE_NONE);
+ 
      if (pt != exp_pt)
          return TEE_ERROR_BAD_PARAMETERS;
      if (!state->key)
          return TEE_ERROR_BAD_STATE;
+ 
+     /* 计算输入数据的 SHA-256 摘要 */
+     inbuf = params[0].memref.buffer;
+     inbuf_len = params[0].memref.size;
+     res = TEE_AllocateOperation(&digest_op, TEE_ALG_SHA256, TEE_MODE_DIGEST, 0);
+     if (res) {
+         EMSG("TEE_AllocateOperation for digest failed: %#" PRIx32, res);
+         return res;
+     }
+     res = TEE_DigestDoFinal(digest_op, inbuf, inbuf_len, digest, &digest_len);
+     TEE_FreeOperation(digest_op);
+     if (res) {
+         EMSG("TEE_DigestDoFinal failed: %#" PRIx32, res);
+         return res;
+     }
+ 
+     /* 获取密钥信息 */
      res = TEE_GetObjectInfo1(state->key, &key_info);
      if (res) {
          EMSG("TEE_GetObjectInfo1 failed: %#" PRIx32, res);
          return res;
      }
-     inbuf = params[0].memref.buffer;
-     inbuf_len = params[0].memref.size;
+ 
+     /* 签名计算摘要 */
      signature = params[1].memref.buffer;
      signature_len = params[1].memref.size;
-     res = TEE_AllocateOperation(&op, alg, TEE_MODE_SIGN, key_info.keySize);
+     res = TEE_AllocateOperation(&op, sign_alg, TEE_MODE_SIGN, key_info.keySize);
      if (res) {
          EMSG("TEE_AllocateOperation for sign failed: %#" PRIx32, res);
          return res;
@@ -216,7 +245,7 @@
          TEE_FreeOperation(op);
          return res;
      }
-     res = TEE_AsymmetricSignDigest(op, NULL, 0, inbuf, inbuf_len, signature, &signature_len);
+     res = TEE_AsymmetricSignDigest(op, NULL, 0, digest, digest_len, signature, &signature_len);
      if (res) {
          EMSG("TEE_AsymmetricSignDigest failed: %#" PRIx32, res);
      }
@@ -226,11 +255,10 @@
  }
  
  /* 使用 RSASSA_PKCS1_V1_5_SHA256 验证签名
-  * 修改后：首先计算输入数据的SHA-256摘要，
-  * 然后使用该摘要进行签名验证，输出：params[2].value.a 为1表示签名有效，0表示签名无效
+  * 修改后：先计算输入数据的 SHA-256 摘要，再用该摘要验证签名
   */
  static TEE_Result cmd_verify(struct acipher *state, uint32_t pt,
-                                TEE_Param params[TEE_NUM_PARAMS])
+                              TEE_Param params[TEE_NUM_PARAMS])
  {
      TEE_Result res;
      const void *raw_input;
@@ -265,7 +293,7 @@
      signature = params[1].memref.buffer;
      signature_len = params[1].memref.size;
  
-     /* 先计算输入数据的SHA-256摘要 */
+     /* 先计算输入数据的 SHA-256 摘要 */
      res = TEE_AllocateOperation(&digest_op, TEE_ALG_SHA256, TEE_MODE_DIGEST, 0);
      if (res) {
          EMSG("TEE_AllocateOperation for digest failed: %#" PRIx32, res);
@@ -306,7 +334,7 @@
   * 输出：params[1].memref 摘要输出（SHA-256 固定32字节）
   */
  static TEE_Result cmd_digest(struct acipher *state, uint32_t pt,
-                                TEE_Param params[TEE_NUM_PARAMS])
+                              TEE_Param params[TEE_NUM_PARAMS])
  {
      (void)state;  /* 未使用 state 参数 */
      TEE_Result res;
@@ -363,7 +391,7 @@
          return TEE_ERROR_OUT_OF_MEMORY;
      
      state->key = TEE_HANDLE_NULL;
-     /* 尝试加载已有持久化密钥，如果加载失败，可在后续调用生成命令 */
+     /* 尝试加载已有持久化密钥 */
      load_persistent_key(state);
      
      *session = state;
