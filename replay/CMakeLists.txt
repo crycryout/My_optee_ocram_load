@@ -1,4 +1,4 @@
-project (optee_example_random C)
+project (replay C)
 
 set (SRC host/main.c)
 

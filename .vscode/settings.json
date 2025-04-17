@@ -1,6 +1,7 @@
 {
     "files.associations": {
         "stdio.h": "c",
-        "err.h": "c"
+        "err.h": "c",
+        "ocram_load_ta.h": "c"
     }
 }

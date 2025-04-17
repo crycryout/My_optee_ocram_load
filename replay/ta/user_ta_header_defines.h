@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2017, Linaro Limited
+ * Copyright (c) 2016, Linaro Limited
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -25,18 +25,34 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
-#ifndef __RANDOM_TA_H__
-#define __RANDOM_TA_H__
+/*
+ * The name of this file must not be modified
+ */
+
+#ifndef USER_TA_HEADER_DEFINES_H
+#define USER_TA_HEADER_DEFINES_H
+
+ /* To get the TA_REPLAY_UUID define */
+#include <replay_ta.h>
+
+#define TA_UUID				TA_REPLAY_UUID
 
 /*
- * This UUID is generated with uuidgen
- * the ITU-T UUID generator at http://www.itu.int/ITU-T/asn1/uuid.html
+ * TA properties: multi-instance TA, no specific attribute
+ * TA_FLAG_EXEC_DDR is meaningless but mandated.
  */
-#define TA_RANDOM_UUID \
-	{ 0xb6c53aba, 0x9669, 0x4668, \
-		{ 0xa7, 0xf2, 0x20, 0x56, 0x29, 0xd0, 0x0f, 0x86} }
+#define TA_FLAGS			TA_FLAG_EXEC_DDR
 
-/* The function ID implemented in this TA */
-#define TA_RANDOM_CMD_GENERATE		0
+/* Provisioned stack size */
+#define TA_STACK_SIZE			(2 * 1024)
 
-#endif /* __RANDOM_TA_H__ */
+/* Provisioned heap size for TEE_Malloc() and friends */
+#define TA_DATA_SIZE			(32 * 1024)
+
+/* The gpd.ta.version property */
+#define TA_VERSION	"1.0"
+
+/* The gpd.ta.description property */
+#define TA_DESCRIPTION	"replay"
+
+#endif /* USER_TA_HEADER_DEFINES_H */

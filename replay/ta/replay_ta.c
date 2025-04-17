@@ -81,7 +81,7 @@ static TEE_Result run_replay(uint32_t param_types, TEE_Param params[4])
     /* 2) 发 “REPLAY_CMD_RUN” 命令给 PTA */
     res = TEE_InvokeTACommand(pta_sess,
                               TEE_TIMEOUT_INFINITE,
-                              REPLAY_CMD_RUN,
+                              TA_REPLAY_CMD_RUN,
                               TEE_PARAM_TYPES(TEE_PARAM_TYPE_NONE,
                                               TEE_PARAM_TYPE_NONE,
                                               TEE_PARAM_TYPE_NONE,
@@ -104,10 +104,9 @@ TEE_Result TA_InvokeCommandEntryPoint(void *sess_ctx __maybe_unused,
 {
     (void)sess_ctx;
     switch (cmd_id) {
-    case REPLAY_CMD_RUN:
+    case TA_REPLAY_CMD_RUN:
         return run_replay(param_types, params);
     default:
         return TEE_ERROR_BAD_PARAMETERS;
     }
 }
- 
