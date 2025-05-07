@@ -9,8 +9,13 @@
 #include <trace.h>
 #include "replay_ta.h"
 
-/* 把宏 TA_REPLAY_UUID 展开成一个真正的变量，才能取地址传给 OpenTASession */
-static const TEE_UUID replay_pta_uuid = TA_REPLAY_UUID;
+#define REPLAY_CMD_RUN 0
+
+/* 把宏 TA_REPLAY_UUID 展开成变量，传给 TEE_OpenTASession */
+static const TEE_UUID replay_pta_uuid = {
+    0xbdf42668, 0x3cf8, 0x45a3,
+    { 0x81, 0x6e, 0x76, 0x86, 0x1c, 0xb0, 0x27, 0x47 }
+};
 
 /* TA 创建时调用 */
 TEE_Result TA_CreateEntryPoint(void)
@@ -36,7 +41,6 @@ TEE_Result TA_OpenSessionEntryPoint(uint32_t param_types,
                                    TEE_PARAM_TYPE_NONE);
     if (param_types != exp)
         return TEE_ERROR_BAD_PARAMETERS;
-    (void)params; (void)sess_ctx;
     DMSG("Replay TA session opened");
     return TEE_SUCCESS;
 }
@@ -55,13 +59,11 @@ static TEE_Result run_replay(uint32_t param_types, TEE_Param params[4])
     TEE_TASessionHandle pta_sess = TEE_HANDLE_NULL;
     TEE_Result res;
 
-    /* 只接受无参数调用 */
     if (param_types != TEE_PARAM_TYPES(TEE_PARAM_TYPE_NONE,
                                        TEE_PARAM_TYPE_NONE,
                                        TEE_PARAM_TYPE_NONE,
                                        TEE_PARAM_TYPE_NONE))
         return TEE_ERROR_BAD_PARAMETERS;
-    (void)params;
 
     /* 1) 打开到 replay PTA 的会话 */
     res = TEE_OpenTASession(&replay_pta_uuid,
@@ -70,9 +72,7 @@ static TEE_Result run_replay(uint32_t param_types, TEE_Param params[4])
                                             TEE_PARAM_TYPE_NONE,
                                             TEE_PARAM_TYPE_NONE,
                                             TEE_PARAM_TYPE_NONE),
-                            NULL,      /* no connection data */
-                            &pta_sess,
-                            &origin);
+                            NULL, &pta_sess, &origin);
     if (res != TEE_SUCCESS) {
         EMSG("TEE_OpenTASession failed: 0x%x origin %u", res, origin);
         return res;
@@ -81,17 +81,16 @@ static TEE_Result run_replay(uint32_t param_types, TEE_Param params[4])
     /* 2) 发 “REPLAY_CMD_RUN” 命令给 PTA */
     res = TEE_InvokeTACommand(pta_sess,
                               TEE_TIMEOUT_INFINITE,
-                              TA_REPLAY_CMD_RUN,
+                              REPLAY_CMD_RUN,
                               TEE_PARAM_TYPES(TEE_PARAM_TYPE_NONE,
                                               TEE_PARAM_TYPE_NONE,
                                               TEE_PARAM_TYPE_NONE,
                                               TEE_PARAM_TYPE_NONE),
-                              NULL,
-                              &origin);
+                              NULL, &origin);
     if (res != TEE_SUCCESS)
         EMSG("TEE_InvokeTACommand(REPLAY_CMD_RUN) failed: 0x%x origin %u", res, origin);
 
-    /* 3) 关会话 */
+    /* 3) 关闭会话 */
     TEE_CloseTASession(pta_sess);
     return res;
 }
@@ -102,11 +101,7 @@ TEE_Result TA_InvokeCommandEntryPoint(void *sess_ctx __maybe_unused,
                                       uint32_t param_types,
                                       TEE_Param params[4])
 {
-    (void)sess_ctx;
-    switch (cmd_id) {
-    case TA_REPLAY_CMD_RUN:
+    if (cmd_id == TA_REPLAY_CMD_RUN)
         return run_replay(param_types, params);
-    default:
-        return TEE_ERROR_BAD_PARAMETERS;
-    }
+    return TEE_ERROR_BAD_PARAMETERS;
 }

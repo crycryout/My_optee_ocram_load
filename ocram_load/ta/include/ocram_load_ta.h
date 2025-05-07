@@ -17,5 +17,6 @@
 #define TA_OCRAM_LOAD_CMD_MAP_MEMORY       2
 #define TA_OCRAM_LOAD_CMD_LOAD             3
 #define TA_OCRAM_LOAD_CMD_STORE            4
+#define TA_OCRAM_LOAD_CMD_READ             5
 
 #endif /*TA_OCRAM_LOAD_H*/

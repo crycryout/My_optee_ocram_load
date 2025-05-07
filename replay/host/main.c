@@ -4,7 +4,7 @@
  * A simple C program that uses the OP‑TEE TEE Client API to
  * call the Replay TA (pseudo‑TA) and run the full Ethos‑U replay.
  *
- * SPDX-License-Identifier: BSD‑2-Clause
+ * SPDX-License-Identifier: BSD-2-Clause
  * Copyright (c) 2025 Rejoice
  */
 
@@ -39,7 +39,7 @@
 		 errx(1, "TEEC_OpenSession failed: 0x%x, origin 0x%x",
 			  res, err_origin);
  
-	 /* 3. 调用 TA_REPLAY_CMD_RUN，无输入输出参数 */
+	 /* 3. 调用 TA_REPLAY_CMD_RUN，无参数 */
 	 memset(&op, 0, sizeof(op));
 	 op.paramTypes = TEEC_PARAM_TYPES(TEEC_NONE,
 									  TEEC_NONE,
