@@ -2,6 +2,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <fcntl.h>
+#include <unistd.h>
 #include <tee_client_api.h>
 #include "ocram_load_ta.h"
 
@@ -18,7 +20,7 @@ int main(int argc, char *argv[])
     TEEC_UUID      uuid = TA_OCRAM_LOAD_UUID;
 
     if (argc < 2) {
-        fprintf(stderr, "Usage: %s <store|load|read>\n", argv[0]);
+        fprintf(stderr, "Usage: %s <store|load|read|inference>\n", argv[0]);
         return 1;
     }
 
@@ -89,7 +91,6 @@ int main(int argc, char *argv[])
         if (res != TEEC_SUCCESS)
             errx(1, "READ failed: 0x%x, origin 0x%x", res, err_origin);
 
-        /* op.params[0].tmpref.size now contains actual bytes read */
         printf("Read %u bytes:\n", (unsigned)op.params[0].tmpref.size);
         for (uint32_t i = 0; i < op.params[0].tmpref.size; i++) {
             if (i % 16 == 0) printf("\n%04x: ", i);
@@ -97,8 +98,58 @@ int main(int argc, char *argv[])
         }
         printf("\n");
 
+    } else if (strcmp(argv[1], "inference") == 0) {
+        /* ========== INFERENCE: load -> start M-core -> read ========== */
+
+        /* 1) OCRAM LOAD */
+        printf("Inference: loading into OCRAM…\n");
+        res = TEEC_InvokeCommand(&sess, TA_OCRAM_LOAD_CMD_LOAD, NULL, &err_origin);
+        if (res != TEEC_SUCCESS)
+            errx(1, "INFERENCE LOAD failed: 0x%x, origin 0x%x", res, err_origin);
+        printf("Inference: loaded into OCRAM.\n");
+
+        /* 2) Start M-core by writing "start" to sysfs */
+        {
+            const char *path = "/sys/class/remoteproc/remoteproc0/state";
+            const char *cmd  = "start";
+            int fd = open(path, O_WRONLY);
+            if (fd < 0) {
+                perror("open sysfs for M-core start");
+                goto cleanup;
+            }
+            if (write(fd, cmd, strlen(cmd)) < 0) {
+                perror("write sysfs for M-core start");
+                close(fd);
+                goto cleanup;
+            }
+            close(fd);
+            printf("Inference: M-core started via remoteproc.\n");
+        }
+
+        /* 3) OCRAM READ */
+        {
+            uint8_t buffer[READ_SIZE];
+            memset(&op, 0, sizeof(op));
+            op.paramTypes = TEEC_PARAM_TYPES(TEEC_MEMREF_TEMP_OUTPUT,
+                                             TEEC_NONE, TEEC_NONE, TEEC_NONE);
+            op.params[0].tmpref.buffer = buffer;
+            op.params[0].tmpref.size   = READ_SIZE;
+
+            printf("Inference: reading back from OCRAM…\n");
+            res = TEEC_InvokeCommand(&sess, TA_OCRAM_LOAD_CMD_READ, &op, &err_origin);
+            if (res != TEEC_SUCCESS)
+                errx(1, "INFERENCE READ failed: 0x%x, origin 0x%x", res, err_origin);
+
+            printf("Inference: read %u bytes:\n", (unsigned)op.params[0].tmpref.size);
+            for (uint32_t i = 0; i < op.params[0].tmpref.size; i++) {
+                if (i % 16 == 0) printf("\n%04x: ", i);
+                printf("%02x ", buffer[i]);
+            }
+            printf("\n");
+        }
+
     } else {
-        fprintf(stderr, "Invalid command '%s'. Use 'store', 'load', or 'read'.\n", argv[1]);
+        fprintf(stderr, "Invalid command '%s'. Use 'store', 'load', 'read', or 'inference'.\n", argv[1]);
     }
 
 cleanup:
