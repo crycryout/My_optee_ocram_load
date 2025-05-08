@@ -65,4 +65,9 @@
  */
 #define TA_AES_CMD_CIPHER		8
 
+#define TA_ACIPHER_CMD_GEN_KEY    9
+#define TA_ACIPHER_CMD_ENCRYPT    10
+#define TA_ACIPHER_CMD_SIGN       11
+#define TA_ACIPHER_CMD_VERIFY     12
+#define TA_ACIPHER_CMD_DIGEST     13
 #endif /*TA_OCRAM_LOAD_H*/
