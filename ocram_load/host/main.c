@@ -24,7 +24,7 @@
 #define SIGNATURE_FILE             "signature.bin"
 #define OUTPUT_MAKE_FILE           "input_data_signed_encrypted.bin"
 #define ENCRYPTED_INPUT_FILE       "input_data_signed_encrypted.bin"
- #define READ_SIZE                  128
+ #define READ_SIZE                  1024
  #define AES_TEST_BUFFER_SIZE       4096
  #define AES_TEST_KEY_SIZE          16
  #define AES_BLOCK_SIZE             16
@@ -366,12 +366,13 @@
             if (TEEC_InvokeCommand(&sess, TA_OCRAM_LOAD_CMD_READ, &read_op, &eo) != TEEC_SUCCESS)
                 errx(1, "OCRAM READ failed");
 
-            printf("First %d bytes read from OCRAM:", READ_SIZE);
-            for (uint32_t i = 0; i < read_op.params[0].tmpref.size; i++) {
+           //printf("First %d bytes read from OCRAM:", READ_SIZE);
+    /*        for (uint32_t i = 0; i < read_op.params[0].tmpref.size; i++) {
                 if ((i % 16) == 0) printf("\n%04x: ", i);
                 printf("%02x ", buf[i]);
             }
             printf("\n");
+            */
         }
 
         free(plain_buf);
